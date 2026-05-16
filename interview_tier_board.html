@@ -245,9 +245,9 @@
   <input type="file" id="csv-input" accept=".csv">
   <div class="format-hint">
     <b>CSV format:</b><br>
-    <code>name</code>, <code>preference_1</code>, <code>preference_2</code>, <code>resume_link</code>, <code>portfolio_link</code>, <code>cc_other_club</code> (yes/no), <code>previous_collab</code><br><br>
+    <code>name</code>, <code>preference_1</code>, <code>preference_2</code>, <code>resume_link</code>, <code>cc_other_club</code> (yes/no), <code>portfolio_link</code>, <code>previous_collab</code><br><br>
     Example row:<br>
-    <code>Aanya Sharma, Technical Team, Editorial Team, https://drive.google.com/..., https://github.com/aanya, yes, Promotions Team</code>
+    <code>Aanya Sharma, Technical Team, Editorial Team, https://drive.google.com/..., yes, https://github.com/aanya, Promotions Team</code>
   </div>
   <button class="demo-btn" id="demo-btn">Load demo data instead</button>
 </div>
@@ -359,15 +359,15 @@ function parseCSV(text) {
   // header-aware parsing: detect header names to map columns
   const first = lines[0];
   const hasHeader = /name/i.test(first) && (/pref|preference|post/i.test(first) || /resume/i.test(first));
-  let nameIdx = 0, pref1Idx = 1, pref2Idx = 2, resumeIdx = 3, portfolioIdx = 4, ccIdx = 5, previousIdx = 6, participatedIdx = 7;
+  let nameIdx = 0, pref1Idx = 1, pref2Idx = 2, resumeIdx = 3, ccIdx = 4, portfolioIdx = 5, previousIdx = 6, participatedIdx = 7;
   if (hasHeader) {
     const headers = splitCSVLine(first).map(h => h.trim().toLowerCase());
     nameIdx = headers.indexOf('name') !== -1 ? headers.indexOf('name') : 0;
     pref1Idx = headers.indexOf('preference_1') !== -1 ? headers.indexOf('preference_1') : (headers.indexOf('pref1') !== -1 ? headers.indexOf('pref1') : 1);
     pref2Idx = headers.indexOf('preference_2') !== -1 ? headers.indexOf('preference_2') : (headers.indexOf('pref2') !== -1 ? headers.indexOf('pref2') : 2);
     resumeIdx = headers.indexOf('resume') !== -1 ? headers.indexOf('resume') : (headers.indexOf('resume_link') !== -1 ? headers.indexOf('resume_link') : 3);
-    portfolioIdx = headers.indexOf('portfolio') !== -1 ? headers.indexOf('portfolio') : (headers.indexOf('github') !== -1 ? headers.indexOf('github') : 4);
-    ccIdx = headers.indexOf('cc') !== -1 ? headers.indexOf('cc') : (headers.indexOf('cc_other_club') !== -1 ? headers.indexOf('cc_other_club') : 5);
+    ccIdx = headers.indexOf('cc') !== -1 ? headers.indexOf('cc') : (headers.indexOf('cc_other_club') !== -1 ? headers.indexOf('cc_other_club') : 4);
+    portfolioIdx = headers.indexOf('portfolio') !== -1 ? headers.indexOf('portfolio') : (headers.indexOf('github') !== -1 ? headers.indexOf('github') : 5);
     previousIdx = headers.indexOf('previous') !== -1 ? headers.indexOf('previous') : (headers.indexOf('previous_collab') !== -1 ? headers.indexOf('previous_collab') : (headers.indexOf('previous_collaboration') !== -1 ? headers.indexOf('previous_collaboration') : 6));
     // detect various header names for "have you taken part in event before ?" or participation
     const participatedHeader = headers.findIndex(h => h.includes('particip') || (h.includes('part') && h.includes('event')) || h.includes('taken'));
@@ -380,20 +380,21 @@ function parseCSV(text) {
     const name = (cols[nameIdx]||'').trim();
     if (!name) continue;
 
-    const extras = cols.slice(4).map(value => (value || '').trim()).filter(Boolean);
-    const ccCell = extras.find(value => /^(yes|no|y|n|no response|nil|n\.a\.?|na)$/i.test(value));
-    const portfolioCell = extras.find(value => /^(https?:\/\/|www\.|mailto:)/i.test(value) || value.includes('drive.google.com') || value.includes('docs.google.com') || value.includes('github.com') || value.includes('behance.net') || value.includes('icloud.com'));
-    const remaining = extras.filter(value => value !== ccCell && value !== portfolioCell);
+    const ccValue = (cols[ccIdx] || '').trim();
+    const portfolioValue = (cols[portfolioIdx] || '').trim();
+    const previousValue = (cols[previousIdx] || '').trim();
+    const participatedValue = (cols[participatedIdx] || '').trim();
+    const normalizedCc = /^yes$/i.test(ccValue) ? 'yes' : (/^no$/i.test(ccValue) ? 'no' : '');
 
     result.push({
       name,
       pref1: (cols[pref1Idx]||'').trim(),
       pref2: (cols[pref2Idx]||'').trim(),
       resume: (cols[resumeIdx]||'').trim(),
-      portfolio: portfolioCell || (cols[portfolioIdx]||'').trim(),
-      cc: ((ccCell || cols[ccIdx] || '')+'').trim().toLowerCase(),
-      previous: remaining[0] || (cols[previousIdx]||'').trim(),
-      participated: (cols[participatedIdx]||'').trim(),
+      portfolio: portfolioValue,
+      cc: normalizedCc,
+      previous: previousValue,
+      participated: participatedValue,
     });
   }
   return result;
@@ -514,7 +515,7 @@ function openModal(name) {
       </div>
       <button class="modal-close" onclick="document.getElementById('ap-modal').classList.remove('open')">close</button>
     </div>
-    ${ap.cc ? `<div class="modal-field"><label>CC at other club</label>
+    ${ap.cc==='yes' || ap.cc==='no' ? `<div class="modal-field"><label>CC at other club</label>
       <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:99px;font-size:12px;font-weight:600;${ap.cc==='yes'?'background:rgba(231,76,60,.15);color:#e74c3c;border:1px solid rgba(231,76,60,.3)':'background:rgba(46,204,113,.12);color:#2ecc71;border:1px solid rgba(46,204,113,.3)'}">
         <span style="width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block"></span>
         ${ap.cc==='yes'?'Yes — in another club':'No other club'}
