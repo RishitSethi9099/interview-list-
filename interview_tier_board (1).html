@@ -328,9 +328,9 @@ const TIERS = [
 const INI_COLORS = ['#e74c3c','#e67e22','#3498db','#2ecc71','#9b59b6','#1abc9c','#e91e63'];
 
 const DEMO = [
-  {name:'Aanya Sharma',pref1:'Technical Team',pref2:'Editorial Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://github.com/aanya',cc:'yes',previous:'Promotions Team'},
-  {name:'Rohan Verma',pref1:'Editorial Team',pref2:'Curations Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
-  {name:'Priya Nair',pref1:'Graphic Designing Team',pref2:'Social Media Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://behance.net/priya',cc:'yes'},
+  {name:'Aanya Sharma',pref1:'Technical Team',pref2:'Editorial Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://github.com/aanya',cc:'yes',previous:'Promotions Team',participated:'yes'},
+  {name:'Rohan Verma',pref1:'Editorial Team',pref2:'Curations Team',resume:'https://drive.google.com/file/d/demo',cc:'no',participated:'no'},
+  {name:'Priya Nair',pref1:'Graphic Designing Team',pref2:'Social Media Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://behance.net/priya',cc:'yes',participated:'yes'},
   {name:'Dev Patel',pref1:'Logistics Team',pref2:'Programs Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
   {name:'Simran Kaur',pref1:'Social Media Team',pref2:'Promotions Team',resume:'https://drive.google.com/file/d/demo',cc:'yes'},
   {name:'Karan Mehta',pref1:'Promotions Team',pref2:'Corporate Affairs Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
@@ -359,7 +359,7 @@ function parseCSV(text) {
   // header-aware parsing: detect header names to map columns
   const first = lines[0];
   const hasHeader = /name/i.test(first) && (/pref|preference|post/i.test(first) || /resume/i.test(first));
-  let nameIdx = 0, pref1Idx = 1, pref2Idx = 2, resumeIdx = 3, portfolioIdx = 4, ccIdx = 5, previousIdx = 6;
+  let nameIdx = 0, pref1Idx = 1, pref2Idx = 2, resumeIdx = 3, portfolioIdx = 4, ccIdx = 5, previousIdx = 6, participatedIdx = 7;
   if (hasHeader) {
     const headers = splitCSVLine(first).map(h => h.trim().toLowerCase());
     nameIdx = headers.indexOf('name') !== -1 ? headers.indexOf('name') : 0;
@@ -369,6 +369,9 @@ function parseCSV(text) {
     portfolioIdx = headers.indexOf('portfolio') !== -1 ? headers.indexOf('portfolio') : (headers.indexOf('github') !== -1 ? headers.indexOf('github') : 4);
     ccIdx = headers.indexOf('cc') !== -1 ? headers.indexOf('cc') : (headers.indexOf('cc_other_club') !== -1 ? headers.indexOf('cc_other_club') : 5);
     previousIdx = headers.indexOf('previous') !== -1 ? headers.indexOf('previous') : (headers.indexOf('previous_collab') !== -1 ? headers.indexOf('previous_collab') : (headers.indexOf('previous_collaboration') !== -1 ? headers.indexOf('previous_collaboration') : 6));
+    // detect various header names for "have you taken part in event before ?" or participation
+    const participatedHeader = headers.findIndex(h => h.includes('particip') || (h.includes('part') && h.includes('event')) || h.includes('taken'));
+    if (participatedHeader !== -1) participatedIdx = participatedHeader;
   }
   const start = hasHeader ? 1 : 0;
   for (let i = start; i < lines.length; i++) {
@@ -384,6 +387,7 @@ function parseCSV(text) {
       portfolio: (cols[portfolioIdx]||'').trim(),
       cc: ((cols[ccIdx]||'')+'').trim().toLowerCase(),
       previous: (cols[previousIdx]||'').trim(),
+      participated: (cols[participatedIdx]||'').trim(),
     });
   }
   return result;
@@ -519,6 +523,7 @@ function openModal(name) {
         View Portfolio
       </a></div>` : ''}
     ${ap.previous ? `<div class="modal-field"><label>Previously collaborated with</label><p>${ap.previous}</p></div>` : ''}
+    ${ap.participated ? `<div class="modal-field"><label>Taken part in events before?</label><p>${ap.participated}</p></div>` : ''}
   `;
   document.getElementById('ap-modal').classList.add('open');
 }
@@ -541,12 +546,12 @@ function buildExport() {
     const placed = applicants.filter(a=>placements[a.name]===t.id);
     if (placed.length) {
       out += `[${t.label}]\n`;
-      placed.forEach(a => out += `  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}\n`);
+      placed.forEach(a => out += `  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`);
       out += '\n';
     }
   });
   const unplaced = applicants.filter(a=>!placements[a.name]);
-  if (unplaced.length) { out += `[UNPLACED]\n`; unplaced.forEach(a=>out+=`  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}\n`); }
+  if (unplaced.length) { out += `[UNPLACED]\n`; unplaced.forEach(a=>out+=`  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`); }
   return out;
 }
 
