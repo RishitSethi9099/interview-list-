@@ -263,6 +263,7 @@
     <div class="topbar-right">
       <button class="btn" id="new-csv-btn">New CSV</button>
       <div id="role-badge" class="btn" style="margin-left:8px;min-width:120px;text-align:center"></div>
+      <button class="btn" id="reset-btn">Reset Placements</button>
       <button class="btn" id="logout-btn" title="Change role">Logout</button>
       <button class="btn btn-primary" id="export-btn">Export Results</button>
     </div>
@@ -818,6 +819,24 @@ document.getElementById('new-csv-btn').addEventListener('click', () => {
   if (serverStream) {
     serverStream.close();
     serverStream = null;
+  }
+});
+
+async function resetPlacements() {
+  placements = {};
+  render();
+  saveBoardState();
+
+  const state = await postServerState({ type: 'resetPlacements' });
+  if (state && Array.isArray(state.applicants)) {
+    applyBoardState(state, { persist: true, broadcast: true });
+    startServerStream();
+  }
+}
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if (confirm('Reset all placed members back to the pool?')) {
+    void resetPlacements();
   }
 });
 
