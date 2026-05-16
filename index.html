@@ -345,20 +345,69 @@ let dragId = null;
 let filterPost = '';
 let filterSearch = '';
 let role = null;
+const BOARD_STATE_KEY = 'interviewBoardStateV1';
+const BOARD_CHANNEL = 'interview-board-sync';
+const boardChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(BOARD_CHANNEL) : null;
 
 function initials(name) { return name.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 function iniColor(name) { let h=0; for(let c of name) h=(h*31+c.charCodeAt(0))%INI_COLORS.length; return INI_COLORS[h]; }
 
+function parseCSVRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+
+    if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && next === '\n') i++;
+      row.push(cell);
+      const hasValue = row.some(col => (col || '').trim() !== '');
+      if (hasValue) rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+
+    cell += ch;
+  }
+
+  row.push(cell);
+  if (row.some(col => (col || '').trim() !== '')) rows.push(row);
+  return rows;
+}
+
 function parseCSV(text) {
-  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const rows = parseCSVRows(text);
   const result = [];
-  if (!lines.length) return result;
-  // header-aware parsing: detect header names to map columns
-  const first = lines[0];
-  const hasHeader = /name/i.test(first) && (/pref|preference|post/i.test(first) || /resume/i.test(first));
+  if (!rows.length) return result;
+
+  const first = rows[0].map(col => (col || '').trim());
+  const firstLine = first.join(',');
+  const hasHeader = /name/i.test(firstLine) && (/pref|preference|post/i.test(firstLine) || /resume/i.test(firstLine));
+
   let nameIdx = 0, pref1Idx = 1, pref2Idx = 2, resumeIdx = 3, portfolioIdx = 4, ccIdx = 5, previousIdx = 6, participatedIdx = 7;
   if (hasHeader) {
-    const headers = splitCSVLine(first).map(h => h.trim().toLowerCase());
+    const headers = first.map(h => h.toLowerCase());
     nameIdx = headers.indexOf('name') !== -1 ? headers.indexOf('name') : 0;
     pref1Idx = headers.indexOf('preference_1') !== -1 ? headers.indexOf('preference_1') : (headers.indexOf('pref1') !== -1 ? headers.indexOf('pref1') : 1);
     pref2Idx = headers.indexOf('preference_2') !== -1 ? headers.indexOf('preference_2') : (headers.indexOf('pref2') !== -1 ? headers.indexOf('pref2') : 2);
@@ -366,40 +415,63 @@ function parseCSV(text) {
     portfolioIdx = headers.indexOf('portfolio') !== -1 ? headers.indexOf('portfolio') : (headers.indexOf('github') !== -1 ? headers.indexOf('github') : 4);
     ccIdx = headers.indexOf('cc') !== -1 ? headers.indexOf('cc') : (headers.indexOf('cc_other_club') !== -1 ? headers.indexOf('cc_other_club') : 5);
     previousIdx = headers.indexOf('previous') !== -1 ? headers.indexOf('previous') : (headers.indexOf('previous_collab') !== -1 ? headers.indexOf('previous_collab') : (headers.indexOf('previous_collaboration') !== -1 ? headers.indexOf('previous_collaboration') : 6));
-    // detect various header names for "have you taken part in event before ?" or participation
     const participatedHeader = headers.findIndex(h => h.includes('particip') || (h.includes('part') && h.includes('event')) || h.includes('taken'));
     if (participatedHeader !== -1) participatedIdx = participatedHeader;
   }
+
   const start = hasHeader ? 1 : 0;
-  for (let i = start; i < lines.length; i++) {
-    const cols = splitCSVLine(lines[i]);
+  for (let i = start; i < rows.length; i++) {
+    const cols = rows[i];
     if (cols.length < 2) continue;
-    const name = (cols[nameIdx]||'').trim();
+    const name = (cols[nameIdx] || '').trim();
     if (!name) continue;
     result.push({
       name,
-      pref1: (cols[pref1Idx]||'').trim(),
-      pref2: (cols[pref2Idx]||'').trim(),
-      resume: (cols[resumeIdx]||'').trim(),
-      portfolio: (cols[portfolioIdx]||'').trim(),
-      cc: ((cols[ccIdx]||'')+'').trim().toLowerCase(),
-      previous: (cols[previousIdx]||'').trim(),
-      participated: (cols[participatedIdx]||'').trim(),
+      pref1: (cols[pref1Idx] || '').trim(),
+      pref2: (cols[pref2Idx] || '').trim(),
+      resume: (cols[resumeIdx] || '').trim(),
+      portfolio: (cols[portfolioIdx] || '').trim(),
+      cc: ((cols[ccIdx] || '') + '').trim().toLowerCase(),
+      previous: (cols[previousIdx] || '').trim(),
+      participated: (cols[participatedIdx] || '').trim(),
     });
   }
   return result;
 }
 
-function splitCSVLine(line) {
-  const cols = []; let cur = ''; let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') { inQ = !inQ; }
-    else if (c === ',' && !inQ) { cols.push(cur); cur = ''; }
-    else cur += c;
+function saveBoardState() {
+  const state = {
+    applicants,
+    placements,
+    updatedAt: Date.now(),
+  };
+  try {
+    localStorage.setItem(BOARD_STATE_KEY, JSON.stringify(state));
+  } catch (e) {}
+
+  if (boardChannel) {
+    try { boardChannel.postMessage(state); } catch (e) {}
   }
-  cols.push(cur);
-  return cols;
+}
+
+function loadBoardStateFromStorage() {
+  try {
+    const raw = localStorage.getItem(BOARD_STATE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    if (!state || !Array.isArray(state.applicants)) return false;
+    applicants = state.applicants;
+    placements = state.placements && typeof state.placements === 'object' ? state.placements : {};
+    document.getElementById('upload-screen').style.display = 'none';
+    const bs = document.getElementById('board-screen');
+    bs.style.display = 'flex';
+    buildBoard();
+    populateFilter();
+    render();
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function loadData(data) {
@@ -411,6 +483,7 @@ function loadData(data) {
   buildBoard();
   populateFilter();
   render();
+  saveBoardState();
 }
 
 function buildBoard() {
@@ -485,7 +558,9 @@ function onDrop(e, target) {
   if (!dragId) return;
   if (target === 'pool') delete placements[dragId];
   else placements[dragId] = target;
-  render(); dragId = null;
+  render();
+  saveBoardState();
+  dragId = null;
 }
 
 function openModal(name) {
@@ -527,7 +602,9 @@ function openModal(name) {
 
 function quickPlace(name, tier) {
   if (tier === 'pool') delete placements[name]; else placements[name] = tier;
-  render(); openModal(name);
+  render();
+  saveBoardState();
+  openModal(name);
 }
 
 document.getElementById('ap-modal').addEventListener('click', e => {
@@ -574,6 +651,7 @@ document.getElementById('new-csv-btn').addEventListener('click', () => {
   document.getElementById('board-screen').style.display = 'none';
   document.getElementById('upload-screen').style.display = 'flex';
   applicants = []; placements = {};
+  try { localStorage.removeItem(BOARD_STATE_KEY); } catch (e) {}
 });
 
 document.getElementById('filter-post').addEventListener('change', e => { filterPost = e.target.value; render(); });
@@ -628,6 +706,10 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 function tryAutoLoad() {
+  if (loadBoardStateFromStorage()) {
+    return;
+  }
+
   const raw = localStorage.getItem('lastCsvRaw');
   if (raw) {
     const data = parseCSV(raw);
@@ -635,6 +717,17 @@ function tryAutoLoad() {
   }
   // fallback: load demo data so board is visible immediately
   loadData(DEMO);
+}
+
+window.addEventListener('storage', e => {
+  if (e.key !== BOARD_STATE_KEY || !e.newValue) return;
+  if (!loadBoardStateFromStorage()) return;
+});
+
+if (boardChannel) {
+  boardChannel.onmessage = () => {
+    loadBoardStateFromStorage();
+  };
 }
 
 // Update topbar role badge
