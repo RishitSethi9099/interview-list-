@@ -379,14 +379,20 @@ function parseCSV(text) {
     if (cols.length < 2) continue;
     const name = (cols[nameIdx]||'').trim();
     if (!name) continue;
+
+    const extras = cols.slice(4).map(value => (value || '').trim()).filter(Boolean);
+    const ccCell = extras.find(value => /^(yes|no|y|n|no response|nil|n\.a\.?|na)$/i.test(value));
+    const portfolioCell = extras.find(value => /^(https?:\/\/|www\.|mailto:)/i.test(value) || value.includes('drive.google.com') || value.includes('docs.google.com') || value.includes('github.com') || value.includes('behance.net') || value.includes('icloud.com'));
+    const remaining = extras.filter(value => value !== ccCell && value !== portfolioCell);
+
     result.push({
       name,
       pref1: (cols[pref1Idx]||'').trim(),
       pref2: (cols[pref2Idx]||'').trim(),
       resume: (cols[resumeIdx]||'').trim(),
-      portfolio: (cols[portfolioIdx]||'').trim(),
-      cc: ((cols[ccIdx]||'')+'').trim().toLowerCase(),
-      previous: (cols[previousIdx]||'').trim(),
+      portfolio: portfolioCell || (cols[portfolioIdx]||'').trim(),
+      cc: ((ccCell || cols[ccIdx] || '')+'').trim().toLowerCase(),
+      previous: remaining[0] || (cols[previousIdx]||'').trim(),
       participated: (cols[participatedIdx]||'').trim(),
     });
   }
