@@ -755,6 +755,43 @@ function buildExport() {
   return out;
 }
 
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function tierLabelFromId(tierId) {
+  const tier = TIERS.find(t => t.id === tierId);
+  return tier ? tier.label : 'Unplaced';
+}
+
+function buildExcelXml() {
+  const rows = [
+    ['Name', 'Position'],
+    ...applicants.map(applicant => [applicant.name, tierLabelFromId(placements[applicantKey(applicant)])]),
+  ];
+
+  const sheetRows = rows.map(row => (
+    `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`
+  )).join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="Interview Results">
+    <Table>
+      ${sheetRows}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+}
+
 document.getElementById('export-btn').addEventListener('click', () => {
   document.getElementById('export-text').value = buildExport();
   document.getElementById('export-modal').classList.add('open');
@@ -768,9 +805,9 @@ function copyExport() {
 }
 
 function downloadExport() {
-  const blob = new Blob([buildExport()], {type:'text/plain'});
+  const blob = new Blob([buildExcelXml()], {type:'application/vnd.ms-excel'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'interview_placements.txt'; a.click();
+  a.download = 'interview_results.xls'; a.click();
 }
 
 document.getElementById('new-csv-btn').addEventListener('click', () => {
