@@ -348,6 +348,8 @@ let role = null;
 const BOARD_STATE_KEY = 'interviewBoardStateV1';
 const BOARD_CHANNEL = 'interview-board-sync';
 const boardChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(BOARD_CHANNEL) : null;
+let serverSyncEnabled = false;
+let serverStream = null;
 
 function initials(name) { return name.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 function iniColor(name) { let h=0; for(let c of name) h=(h*31+c.charCodeAt(0))%INI_COLORS.length; return INI_COLORS[h]; }
@@ -426,6 +428,7 @@ function parseCSV(text) {
     const name = (cols[nameIdx] || '').trim();
     if (!name) continue;
     result.push({
+      id: name,
       name,
       pref1: (cols[pref1Idx] || '').trim(),
       pref2: (cols[pref2Idx] || '').trim(),
@@ -439,7 +442,93 @@ function parseCSV(text) {
   return result;
 }
 
-function saveBoardState() {
+function applicantKey(applicant) {
+  return applicant.id || applicant.name;
+}
+
+function normalizeApplicants(list) {
+  return (Array.isArray(list) ? list : []).map(a => ({ ...a, id: applicantKey(a) }));
+}
+
+function normalizePlacements(rawPlacements, list) {
+  const src = rawPlacements && typeof rawPlacements === 'object' ? rawPlacements : {};
+  const next = {};
+
+  list.forEach(applicant => {
+    const key = applicantKey(applicant);
+    const tier = src[key] || src[applicant.name];
+    if (tier) next[key] = tier;
+  });
+
+  return next;
+}
+
+function applyBoardState(state, options = {}) {
+  const shouldPersist = options.persist !== false;
+  const shouldBroadcast = options.broadcast !== false;
+
+  applicants = normalizeApplicants(state.applicants);
+  placements = normalizePlacements(state.placements, applicants);
+
+  document.getElementById('upload-screen').style.display = 'none';
+  document.getElementById('board-screen').style.display = 'flex';
+  buildBoard();
+  populateFilter();
+  render();
+
+  if (shouldPersist) {
+    saveBoardState({ broadcast: shouldBroadcast });
+  }
+}
+
+async function postServerState(payload) {
+  try {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) return null;
+    serverSyncEnabled = true;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function fetchServerState() {
+  try {
+    const res = await fetch('/api/sync', { cache: 'no-store' });
+    if (!res.ok) return null;
+    serverSyncEnabled = true;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function startServerStream() {
+  if (!serverSyncEnabled || serverStream || typeof EventSource === 'undefined') return;
+
+  serverStream = new EventSource('/api/sync/stream');
+  serverStream.onmessage = (event) => {
+    try {
+      const state = JSON.parse(event.data);
+      if (!Array.isArray(state.applicants)) return;
+      applyBoardState(state, { persist: true, broadcast: true });
+    } catch (e) {}
+  };
+
+  serverStream.onerror = () => {
+    if (serverStream) {
+      serverStream.close();
+      serverStream = null;
+    }
+  };
+}
+
+function saveBoardState(options = {}) {
+  const shouldBroadcast = options.broadcast !== false;
   const state = {
     applicants,
     placements,
@@ -449,7 +538,7 @@ function saveBoardState() {
     localStorage.setItem(BOARD_STATE_KEY, JSON.stringify(state));
   } catch (e) {}
 
-  if (boardChannel) {
+  if (shouldBroadcast && boardChannel) {
     try { boardChannel.postMessage(state); } catch (e) {}
   }
 }
@@ -460,30 +549,22 @@ function loadBoardStateFromStorage() {
     if (!raw) return false;
     const state = JSON.parse(raw);
     if (!state || !Array.isArray(state.applicants)) return false;
-    applicants = state.applicants;
-    placements = state.placements && typeof state.placements === 'object' ? state.placements : {};
-    document.getElementById('upload-screen').style.display = 'none';
-    const bs = document.getElementById('board-screen');
-    bs.style.display = 'flex';
-    buildBoard();
-    populateFilter();
-    render();
+    applyBoardState(state, { persist: false, broadcast: false });
     return true;
   } catch (e) {
     return false;
   }
 }
 
-function loadData(data) {
-  applicants = data.filter(a => a.name);
-  placements = {};
-  document.getElementById('upload-screen').style.display = 'none';
-  const bs = document.getElementById('board-screen');
-  bs.style.display = 'flex';
-  buildBoard();
-  populateFilter();
-  render();
-  saveBoardState();
+async function loadData(data) {
+  const nextApplicants = normalizeApplicants(data.filter(a => a.name));
+  applyBoardState({ applicants: nextApplicants, placements: {} }, { persist: true, broadcast: true });
+
+  const serverState = await postServerState({ type: 'init', applicants: nextApplicants });
+  if (serverState && Array.isArray(serverState.applicants)) {
+    applyBoardState(serverState, { persist: true, broadcast: true });
+    startServerStream();
+  }
 }
 
 function buildBoard() {
@@ -523,14 +604,14 @@ function render() {
   });
 
   visible.forEach(ap => {
-    const tier = placements[ap.name] || 'pool';
+    const tier = placements[applicantKey(ap)] || 'pool';
     const zone = tier === 'pool' ? pool : document.getElementById('drop-'+tier);
     if (!zone) return;
     const card = makeCard(ap, tier);
     zone.appendChild(card);
   });
 
-  const unplaced = applicants.filter(a => !placements[a.name]).length;
+  const unplaced = applicants.filter(a => !placements[applicantKey(a)]).length;
   const placed = applicants.length - unplaced;
   document.getElementById('stat-total').textContent = applicants.length;
   document.getElementById('stat-placed').textContent = placed;
@@ -542,32 +623,40 @@ function makeCard(ap, tier) {
   const card = document.createElement('div');
   card.className = 'card';
   card.draggable = true;
-  card.dataset.name = ap.name;
+  card.dataset.name = applicantKey(ap);
   const col = iniColor(ap.name);
   const ini = initials(ap.name);
   card.innerHTML = `<div class="ini" style="background:${col}22;color:${col}">${ini}</div><span>${ap.name}</span>${ap.pref1?`<span class="post-tag" title="Preference 1">${ap.pref1.replace(' Team','')}</span>`:''}${ap.pref2?`<span class="post-tag" style="opacity:.6" title="Preference 2">${ap.pref2.replace(' Team','')}</span>`:''}${ap.cc==='yes'?`<span title="CC at other club" style="font-size:10px;color:#e74c3c;border:1px solid rgba(231,76,60,.4);background:rgba(231,76,60,.1);padding:1px 6px;border-radius:99px">CC</span>`:''}`;
-  card.addEventListener('dragstart', e => { dragId = ap.name; e.dataTransfer.effectAllowed='move'; });
-  card.addEventListener('click', () => openModal(ap.name));
+  card.addEventListener('dragstart', e => { dragId = applicantKey(ap); e.dataTransfer.effectAllowed='move'; });
+  card.addEventListener('click', () => openModal(applicantKey(ap)));
   return card;
 }
 
 function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
 function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
-function onDrop(e, target) {
+async function onDrop(e, target) {
   e.preventDefault(); e.currentTarget.classList.remove('drag-over');
   if (!dragId) return;
   if (target === 'pool') delete placements[dragId];
   else placements[dragId] = target;
   render();
   saveBoardState();
+
+  const state = await postServerState({ type: 'place', applicantId: dragId, tierId: target === 'pool' ? null : target });
+  if (state && Array.isArray(state.applicants)) {
+    applyBoardState(state, { persist: true, broadcast: true });
+    startServerStream();
+  }
+
   dragId = null;
 }
 
-function openModal(name) {
-  const ap = applicants.find(a=>a.name===name);
-  const tier = placements[name] || null;
-  const col = iniColor(name);
-  const ini = initials(name);
+function openModal(applicantId) {
+  const ap = applicants.find(a => applicantKey(a) === applicantId);
+  if (!ap) return;
+  const tier = placements[applicantId] || null;
+  const col = iniColor(ap.name);
+  const ini = initials(ap.name);
   document.getElementById('modal-inner').innerHTML = `
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
       <div class="modal-ini" style="background:${col}22;color:${col}">${ini}</div>
@@ -600,11 +689,11 @@ function openModal(name) {
   document.getElementById('ap-modal').classList.add('open');
 }
 
-function quickPlace(name, tier) {
-  if (tier === 'pool') delete placements[name]; else placements[name] = tier;
+function quickPlace(applicantId, tier) {
+  if (tier === 'pool') delete placements[applicantId]; else placements[applicantId] = tier;
   render();
   saveBoardState();
-  openModal(name);
+  openModal(applicantId);
 }
 
 document.getElementById('ap-modal').addEventListener('click', e => {
@@ -617,14 +706,14 @@ document.getElementById('export-modal').addEventListener('click', e => {
 function buildExport() {
   let out = '=== INTERVIEW PLACEMENTS ===\n\n';
   TIERS.forEach(t => {
-    const placed = applicants.filter(a=>placements[a.name]===t.id);
+    const placed = applicants.filter(a=>placements[applicantKey(a)]===t.id);
     if (placed.length) {
       out += `[${t.label}]\n`;
       placed.forEach(a => out += `  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`);
       out += '\n';
     }
   });
-  const unplaced = applicants.filter(a=>!placements[a.name]);
+  const unplaced = applicants.filter(a=>!placements[applicantKey(a)]);
   if (unplaced.length) { out += `[UNPLACED]\n`; unplaced.forEach(a=>out+=`  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`); }
   return out;
 }
@@ -652,6 +741,10 @@ document.getElementById('new-csv-btn').addEventListener('click', () => {
   document.getElementById('upload-screen').style.display = 'flex';
   applicants = []; placements = {};
   try { localStorage.removeItem(BOARD_STATE_KEY); } catch (e) {}
+  if (serverStream) {
+    serverStream.close();
+    serverStream = null;
+  }
 });
 
 document.getElementById('filter-post').addEventListener('change', e => { filterPost = e.target.value; render(); });
@@ -664,7 +757,7 @@ dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('ove
 dz.addEventListener('dragleave', () => dz.classList.remove('over'));
 dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
 
-document.getElementById('demo-btn').addEventListener('click', () => loadData(DEMO));
+document.getElementById('demo-btn').addEventListener('click', () => { void loadData(DEMO); });
 
 // Persist last uploaded CSV and auto-load on open. This integrates CSV into the HTML for quick use.
 document.getElementById('csv-input').addEventListener('change', e => handleFile(e.target.files[0]));
@@ -676,36 +769,49 @@ function handleFile(file) {
   reader.onload = e => {
     try { localStorage.setItem('lastCsvRaw', e.target.result); } catch (err) {}
     const data = parseCSV(e.target.result);
-    if (data.length) loadData(data); else alert('No valid rows found. Check CSV format.');
+    if (data.length) { void loadData(data); } else alert('No valid rows found. Check CSV format.');
   };
   reader.readAsText(file);
 }
 
+function bindRoleButtons() {
+  document.querySelectorAll('#login-screen .roles button').forEach(btn => {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      role = btn.dataset.role;
+      try { localStorage.setItem('role', role); } catch (e) {}
+      document.getElementById('login-screen').style.display = 'none';
+      updateRoleBadge();
+      void tryAutoLoad();
+    });
+  });
+}
+
 // Auto-load logic on page open
 window.addEventListener('DOMContentLoaded', () => {
+  bindRoleButtons();
+
   // show login if role not set
   role = localStorage.getItem('role');
   const login = document.getElementById('login-screen');
   if (!role) {
     login.style.display = 'flex';
-    // wire role buttons
-    document.querySelectorAll('#login-screen .roles button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        role = btn.dataset.role;
-        try { localStorage.setItem('role', role); } catch (e) {}
-        login.style.display = 'none';
-        updateRoleBadge();
-        tryAutoLoad();
-      });
-    });
     return;
   } else {
     login.style.display = 'none';
-    tryAutoLoad();
+    void tryAutoLoad();
   }
 });
 
-function tryAutoLoad() {
+async function tryAutoLoad() {
+  const remote = await fetchServerState();
+  if (remote && Array.isArray(remote.applicants) && remote.applicants.length) {
+    applyBoardState(remote, { persist: true, broadcast: true });
+    startServerStream();
+    return;
+  }
+
   if (loadBoardStateFromStorage()) {
     return;
   }
@@ -713,10 +819,11 @@ function tryAutoLoad() {
   const raw = localStorage.getItem('lastCsvRaw');
   if (raw) {
     const data = parseCSV(raw);
-    if (data.length) { loadData(data); return; }
+    if (data.length) { await loadData(data); return; }
   }
-  // fallback: load demo data so board is visible immediately
-  loadData(DEMO);
+
+  document.getElementById('board-screen').style.display = 'none';
+  document.getElementById('upload-screen').style.display = 'flex';
 }
 
 window.addEventListener('storage', e => {
