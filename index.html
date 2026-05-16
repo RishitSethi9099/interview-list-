@@ -297,7 +297,351 @@
 </div>
 
 <script>
-// (the same JS from interview_tier_board (1).html) — to keep patch small I copied full content previously
+const TIERS = [
+  { id:'corporate',  label:'Corporate Affairs Team',  dot:'#e74c3c' },
+  { id:'curations',  label:'Curations Team',           dot:'#e67e22' },
+  { id:'editorial',  label:'Editorial Team',           dot:'#f1c40f' },
+  { id:'graphic',    label:'Graphic Designing Team',   dot:'#2ecc71' },
+  { id:'logistics',  label:'Logistics Team',           dot:'#1abc9c' },
+  { id:'programs',   label:'Programs Team',            dot:'#3498db' },
+  { id:'promotions', label:'Promotions Team',          dot:'#9b59b6' },
+  { id:'technical',  label:'Technical Team',           dot:'#e91e63' },
+  { id:'webmaster',  label:'Webmaster',                dot:'#ff5722' },
+  { id:'coverage',   label:'Coverage Team',            dot:'#00bcd4' },
+  { id:'socialmedia',label:'Social Media Team',        dot:'#8bc34a' },
+  { id:'finance',    label:'Finance Team',             dot:'#ffc107' },
+];
+const INI_COLORS = ['#e74c3c','#e67e22','#3498db','#2ecc71','#9b59b6','#1abc9c','#e91e63'];
+
+const DEMO = [
+  {name:'Aanya Sharma',pref1:'Technical Team',pref2:'Editorial Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://github.com/aanya',cc:'yes',previous:'Promotions Team',participated:'yes'},
+  {name:'Rohan Verma',pref1:'Editorial Team',pref2:'Curations Team',resume:'https://drive.google.com/file/d/demo',cc:'no',participated:'no'},
+  {name:'Priya Nair',pref1:'Graphic Designing Team',pref2:'Social Media Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://behance.net/priya',cc:'yes',participated:'yes'},
+  {name:'Dev Patel',pref1:'Logistics Team',pref2:'Programs Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
+  {name:'Simran Kaur',pref1:'Social Media Team',pref2:'Promotions Team',resume:'https://drive.google.com/file/d/demo',cc:'yes'},
+  {name:'Karan Mehta',pref1:'Promotions Team',pref2:'Corporate Affairs Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
+  {name:'Tanvi Joshi',pref1:'Programs Team',pref2:'Editorial Team',resume:'https://drive.google.com/file/d/demo',cc:'yes'},
+  {name:'Arjun Singh',pref1:'Coverage Team',pref2:'Social Media Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
+  {name:'Meera Iyer',pref1:'Finance Team',pref2:'Logistics Team',resume:'https://drive.google.com/file/d/demo',cc:'yes'},
+  {name:'Sahil Gupta',pref1:'Corporate Affairs Team',pref2:'Programs Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
+  {name:'Nisha Rawat',pref1:'Webmaster',pref2:'Technical Team',resume:'https://drive.google.com/file/d/demo',portfolio:'https://github.com/nisha',cc:'yes'},
+  {name:'Vikram Das',pref1:'Curations Team',pref2:'Editorial Team',resume:'https://drive.google.com/file/d/demo',cc:'no'},
+];
+
+let applicants = [];
+let placements = {};
+let dragId = null;
+let filterPost = '';
+let filterSearch = '';
+let role = null;
+
+function initials(name) { return name.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
+function iniColor(name) { let h=0; for(let c of name) h=(h*31+c.charCodeAt(0))%INI_COLORS.length; return INI_COLORS[h]; }
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const result = [];
+  if (!lines.length) return result;
+  // header-aware parsing: detect header names to map columns
+  const first = lines[0];
+  const hasHeader = /name/i.test(first) && (/pref|preference|post/i.test(first) || /resume/i.test(first));
+  let nameIdx = 0, pref1Idx = 1, pref2Idx = 2, resumeIdx = 3, portfolioIdx = 4, ccIdx = 5, previousIdx = 6, participatedIdx = 7;
+  if (hasHeader) {
+    const headers = splitCSVLine(first).map(h => h.trim().toLowerCase());
+    nameIdx = headers.indexOf('name') !== -1 ? headers.indexOf('name') : 0;
+    pref1Idx = headers.indexOf('preference_1') !== -1 ? headers.indexOf('preference_1') : (headers.indexOf('pref1') !== -1 ? headers.indexOf('pref1') : 1);
+    pref2Idx = headers.indexOf('preference_2') !== -1 ? headers.indexOf('preference_2') : (headers.indexOf('pref2') !== -1 ? headers.indexOf('pref2') : 2);
+    resumeIdx = headers.indexOf('resume') !== -1 ? headers.indexOf('resume') : (headers.indexOf('resume_link') !== -1 ? headers.indexOf('resume_link') : 3);
+    portfolioIdx = headers.indexOf('portfolio') !== -1 ? headers.indexOf('portfolio') : (headers.indexOf('github') !== -1 ? headers.indexOf('github') : 4);
+    ccIdx = headers.indexOf('cc') !== -1 ? headers.indexOf('cc') : (headers.indexOf('cc_other_club') !== -1 ? headers.indexOf('cc_other_club') : 5);
+    previousIdx = headers.indexOf('previous') !== -1 ? headers.indexOf('previous') : (headers.indexOf('previous_collab') !== -1 ? headers.indexOf('previous_collab') : (headers.indexOf('previous_collaboration') !== -1 ? headers.indexOf('previous_collaboration') : 6));
+    // detect various header names for "have you taken part in event before ?" or participation
+    const participatedHeader = headers.findIndex(h => h.includes('particip') || (h.includes('part') && h.includes('event')) || h.includes('taken'));
+    if (participatedHeader !== -1) participatedIdx = participatedHeader;
+  }
+  const start = hasHeader ? 1 : 0;
+  for (let i = start; i < lines.length; i++) {
+    const cols = splitCSVLine(lines[i]);
+    if (cols.length < 2) continue;
+    const name = (cols[nameIdx]||'').trim();
+    if (!name) continue;
+    result.push({
+      name,
+      pref1: (cols[pref1Idx]||'').trim(),
+      pref2: (cols[pref2Idx]||'').trim(),
+      resume: (cols[resumeIdx]||'').trim(),
+      portfolio: (cols[portfolioIdx]||'').trim(),
+      cc: ((cols[ccIdx]||'')+'').trim().toLowerCase(),
+      previous: (cols[previousIdx]||'').trim(),
+      participated: (cols[participatedIdx]||'').trim(),
+    });
+  }
+  return result;
+}
+
+function splitCSVLine(line) {
+  const cols = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQ = !inQ; }
+    else if (c === ',' && !inQ) { cols.push(cur); cur = ''; }
+    else cur += c;
+  }
+  cols.push(cur);
+  return cols;
+}
+
+function loadData(data) {
+  applicants = data.filter(a => a.name);
+  placements = {};
+  document.getElementById('upload-screen').style.display = 'none';
+  const bs = document.getElementById('board-screen');
+  bs.style.display = 'flex';
+  buildBoard();
+  populateFilter();
+  render();
+}
+
+function buildBoard() {
+  const board = document.getElementById('tier-board');
+  board.innerHTML = '';
+  TIERS.forEach(t => {
+    const row = document.createElement('div');
+    row.className = `tier-row`;
+    row.innerHTML = `<div class="tier-label" style="background:${t.dot};color:#fff">${t.label}</div>
+      <div class="tier-drop" id="drop-${t.id}" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event,'${t.id}')"></div>`;
+    board.appendChild(row);
+  });
+}
+
+function populateFilter() {
+  const sel = document.getElementById('filter-post');
+  sel.innerHTML = '<option value="">All</option>';
+  const posts = [...new Set([
+    ...applicants.map(a=>a.pref1),
+    ...applicants.map(a=>a.pref2)
+  ].filter(Boolean))].sort();
+  posts.forEach(p => { const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o); });
+}
+
+function render() {
+  TIERS.forEach(t => {
+    document.getElementById('drop-'+t.id).innerHTML = '';
+  });
+  const pool = document.getElementById('pool');
+  const poolEmpty = document.getElementById('pool-empty');
+  pool.querySelectorAll('.card').forEach(c=>c.remove());
+
+  const visible = applicants.filter(a => {
+    if (filterPost && a.pref1 !== filterPost && a.pref2 !== filterPost) return false;
+    if (filterSearch && !a.name.toLowerCase().includes(filterSearch.toLowerCase())) return false;
+    return true;
+  });
+
+  visible.forEach(ap => {
+    const tier = placements[ap.name] || 'pool';
+    const zone = tier === 'pool' ? pool : document.getElementById('drop-'+tier);
+    if (!zone) return;
+    const card = makeCard(ap, tier);
+    zone.appendChild(card);
+  });
+
+  const unplaced = applicants.filter(a => !placements[a.name]).length;
+  const placed = applicants.length - unplaced;
+  document.getElementById('stat-total').textContent = applicants.length;
+  document.getElementById('stat-placed').textContent = placed;
+  document.getElementById('stat-remaining').textContent = unplaced;
+  poolEmpty.style.display = pool.querySelectorAll('.card').length === 0 ? 'block' : 'none';
+}
+
+function makeCard(ap, tier) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.draggable = true;
+  card.dataset.name = ap.name;
+  const col = iniColor(ap.name);
+  const ini = initials(ap.name);
+  card.innerHTML = `<div class="ini" style="background:${col}22;color:${col}">${ini}</div><span>${ap.name}</span>${ap.pref1?`<span class="post-tag" title="Preference 1">${ap.pref1.replace(' Team','')}</span>`:''}${ap.pref2?`<span class="post-tag" style="opacity:.6" title="Preference 2">${ap.pref2.replace(' Team','')}</span>`:''}${ap.cc==='yes'?`<span title="CC at other club" style="font-size:10px;color:#e74c3c;border:1px solid rgba(231,76,60,.4);background:rgba(231,76,60,.1);padding:1px 6px;border-radius:99px">CC</span>`:''}`;
+  card.addEventListener('dragstart', e => { dragId = ap.name; e.dataTransfer.effectAllowed='move'; });
+  card.addEventListener('click', () => openModal(ap.name));
+  return card;
+}
+
+function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+function onDrop(e, target) {
+  e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+  if (!dragId) return;
+  if (target === 'pool') delete placements[dragId];
+  else placements[dragId] = target;
+  render(); dragId = null;
+}
+
+function openModal(name) {
+  const ap = applicants.find(a=>a.name===name);
+  const tier = placements[name] || null;
+  const col = iniColor(name);
+  const ini = initials(name);
+  document.getElementById('modal-inner').innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+      <div class="modal-ini" style="background:${col}22;color:${col}">${ini}</div>
+      <div style="flex:1">
+        <div class="modal-name">${ap.name}</div>
+        <div class="modal-sub" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          ${ap.pref1?`<span style="background:${col}22;color:${col};font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">1st: ${ap.pref1}</span>`:''}
+          ${ap.pref2?`<span style="background:rgba(255,255,255,.07);color:#999;font-size:11px;padding:2px 8px;border-radius:99px">2nd: ${ap.pref2}</span>`:''}
+        </div>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('ap-modal').classList.remove('open')">close</button>
+    </div>
+    ${ap.cc ? `<div class="modal-field"><label>CC at other club</label>
+      <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:99px;font-size:12px;font-weight:600;${ap.cc==='yes'?'background:rgba(231,76,60,.15);color:#e74c3c;border:1px solid rgba(231,76,60,.3)':'background:rgba(46,204,113,.12);color:#2ecc71;border:1px solid rgba(46,204,113,.3)'}">
+        <span style="width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block"></span>
+        ${ap.cc==='yes'?'Yes — in another club':'No other club'}
+      </span></div>` : ''}
+    ${ap.resume ? `<a class="resume-btn" href="${ap.resume}" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Open Resume
+    </a>` : '<p style="font-size:13px;color:#555;margin-bottom:14px">No resume link provided.</p>'}
+    ${ap.portfolio && /technical|graphic/i.test((ap.pref1||'')+" "+(ap.pref2||'')) ? `<div style="margin-top:8px"><label>Portfolio / Project</label>
+      <a class="resume-btn" href="${ap.portfolio}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.9-4.24"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/></svg>
+        View Portfolio
+      </a></div>` : ''}
+    ${ap.previous ? `<div class="modal-field"><label>Previously collaborated with</label><p>${ap.previous}</p></div>` : ''}
+    ${ap.participated ? `<div class="modal-field"><label>Taken part in events before?</label><p>${ap.participated}</p></div>` : ''}
+  `;
+  document.getElementById('ap-modal').classList.add('open');
+}
+
+function quickPlace(name, tier) {
+  if (tier === 'pool') delete placements[name]; else placements[name] = tier;
+  render(); openModal(name);
+}
+
+document.getElementById('ap-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('ap-modal')) document.getElementById('ap-modal').classList.remove('open');
+});
+document.getElementById('export-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('export-modal')) document.getElementById('export-modal').classList.remove('open');
+});
+
+function buildExport() {
+  let out = '=== INTERVIEW PLACEMENTS ===\n\n';
+  TIERS.forEach(t => {
+    const placed = applicants.filter(a=>placements[a.name]===t.id);
+    if (placed.length) {
+      out += `[${t.label}]\n`;
+      placed.forEach(a => out += `  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`);
+      out += '\n';
+    }
+  });
+  const unplaced = applicants.filter(a=>!placements[a.name]);
+  if (unplaced.length) { out += `[UNPLACED]\n`; unplaced.forEach(a=>out+=`  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`); }
+  return out;
+}
+
+document.getElementById('export-btn').addEventListener('click', () => {
+  document.getElementById('export-text').value = buildExport();
+  document.getElementById('export-modal').classList.add('open');
+});
+
+function copyExport() {
+  navigator.clipboard.writeText(document.getElementById('export-text').value).then(()=>{
+    const btn = document.querySelector('#export-modal .btn-primary');
+    btn.textContent = 'Copied!'; setTimeout(()=>btn.textContent='Copy to clipboard',2000);
+  });
+}
+
+function downloadExport() {
+  const blob = new Blob([buildExport()], {type:'text/plain'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'interview_placements.txt'; a.click();
+}
+
+document.getElementById('new-csv-btn').addEventListener('click', () => {
+  document.getElementById('board-screen').style.display = 'none';
+  document.getElementById('upload-screen').style.display = 'flex';
+  applicants = []; placements = {};
+});
+
+document.getElementById('filter-post').addEventListener('change', e => { filterPost = e.target.value; render(); });
+document.getElementById('filter-search').addEventListener('input', e => { filterSearch = e.target.value; render(); });
+
+
+
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
+
+document.getElementById('demo-btn').addEventListener('click', () => loadData(DEMO));
+
+// Persist last uploaded CSV and auto-load on open. This integrates CSV into the HTML for quick use.
+document.getElementById('csv-input').addEventListener('change', e => handleFile(e.target.files[0]));
+
+// patch handleFile to save CSV text so we can auto-load on open
+function handleFile(file) {
+  if (!file || !file.name.endsWith('.csv')) { alert('Please upload a .csv file.'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try { localStorage.setItem('lastCsvRaw', e.target.result); } catch (err) {}
+    const data = parseCSV(e.target.result);
+    if (data.length) loadData(data); else alert('No valid rows found. Check CSV format.');
+  };
+  reader.readAsText(file);
+}
+
+// Auto-load logic on page open
+window.addEventListener('DOMContentLoaded', () => {
+  // show login if role not set
+  role = localStorage.getItem('role');
+  const login = document.getElementById('login-screen');
+  if (!role) {
+    login.style.display = 'flex';
+    // wire role buttons
+    document.querySelectorAll('#login-screen .roles button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        role = btn.dataset.role;
+        try { localStorage.setItem('role', role); } catch (e) {}
+        login.style.display = 'none';
+        updateRoleBadge();
+        tryAutoLoad();
+      });
+    });
+    return;
+  } else {
+    login.style.display = 'none';
+    tryAutoLoad();
+  }
+});
+
+function tryAutoLoad() {
+  const raw = localStorage.getItem('lastCsvRaw');
+  if (raw) {
+    const data = parseCSV(raw);
+    if (data.length) { loadData(data); return; }
+  }
+  // fallback: load demo data so board is visible immediately
+  loadData(DEMO);
+}
+
+// Update topbar role badge
+function updateRoleBadge() {
+  const el = document.getElementById('role-badge');
+  if (!el) return;
+  if (role) el.textContent = (role || '').toUpperCase().replace('_',' ');
+  else el.textContent = '';
+}
+updateRoleBadge();
+
+// Logout handler to clear saved role and show login screen
+document.getElementById('logout-btn').addEventListener('click', () => {
+  try { localStorage.removeItem('role'); } catch (e) {}
+  role = null;
+  updateRoleBadge();
+  document.getElementById('login-screen').style.display = 'flex';
+});
 </script>
 </body>
 </html>
