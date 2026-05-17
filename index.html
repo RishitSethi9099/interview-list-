@@ -652,7 +652,8 @@ function render() {
     const tier = placements[applicantKey(ap)] || 'pool';
     const zone = tier === 'pool' ? pool : document.getElementById('drop-'+tier);
     if (!zone) return;
-    const card = makeCard(ap, tier);
+    const roleLabel = tier === 'pool' ? '' : getRoleLabel(tier, applicantKey(ap));
+    const card = makeCard(ap, tier, roleLabel);
     zone.appendChild(card);
   });
 
@@ -664,14 +665,23 @@ function render() {
   poolEmpty.style.display = pool.querySelectorAll('.card').length === 0 ? 'block' : 'none';
 }
 
-function makeCard(ap, tier) {
+function getRoleLabel(tierId, applicantId) {
+  const tierMembers = applicants.filter(a => placements[applicantKey(a)] === tierId).map(a => applicantKey(a));
+  const index = tierMembers.indexOf(applicantId);
+  if (index === -1) return '';
+  if (index === 0) return 'Head';
+  if (index === 1) return 'Joint Head';
+  return `SC${index - 1}`;
+}
+
+function makeCard(ap, tier, roleLabel = '') {
   const card = document.createElement('div');
   card.className = 'card';
   card.draggable = true;
   card.dataset.name = applicantKey(ap);
   const col = iniColor(ap.name);
   const ini = initials(ap.name);
-  card.innerHTML = `<div class="ini" style="background:${col}22;color:${col}">${ini}</div><span>${ap.name}</span>${ap.pref1?`<span class="post-tag" title="Preference 1">${ap.pref1.replace(' Team','')}</span>`:''}${ap.pref2?`<span class="post-tag" style="opacity:.6" title="Preference 2">${ap.pref2.replace(' Team','')}</span>`:''}${ap.cc==='yes'?`<span title="CC at other club" style="font-size:10px;color:#e74c3c;border:1px solid rgba(231,76,60,.4);background:rgba(231,76,60,.1);padding:1px 6px;border-radius:99px">CC</span>`:''}`;
+  card.innerHTML = `<div class="ini" style="background:${col}22;color:${col}">${ini}</div><div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1"><span style="font-size:10px;font-weight:700;letter-spacing:.04em;color:${col};text-transform:uppercase;${roleLabel ? '' : 'display:none;'}">${roleLabel}</span><span>${ap.name}</span></div>${ap.pref1?`<span class="post-tag" title="Preference 1">${ap.pref1.replace(' Team','')}</span>`:''}${ap.pref2?`<span class="post-tag" style="opacity:.6" title="Preference 2">${ap.pref2.replace(' Team','')}</span>`:''}${ap.cc==='yes'?`<span title="CC at other club" style="font-size:10px;color:#e74c3c;border:1px solid rgba(231,76,60,.4);background:rgba(231,76,60,.1);padding:1px 6px;border-radius:99px">CC</span>`:''}`;
   card.addEventListener('dragstart', e => { dragId = applicantKey(ap); e.dataTransfer.effectAllowed='move'; });
   card.addEventListener('click', () => openModal(applicantKey(ap)));
   return card;
@@ -749,18 +759,18 @@ document.getElementById('export-modal').addEventListener('click', e => {
 });
 
 function buildExport() {
-  // Tabular export: Team, Head, Joint Head, SC1, SC2, Others
-  const headers = ['Team','Head','Joint Head','SC1','SC2','Others'];
+  // Tabular export: Team, Head, Joint Head, SC1, SC2, SC3...
+  const maxPlaced = Math.max(0, ...TIERS.map(t => applicants.filter(a => placements[applicantKey(a)] === t.id).length));
+  const headers = ['Team', 'Head', 'Joint Head'];
+  for (let i = 1; i <= Math.max(0, maxPlaced - 2); i++) headers.push(`SC${i}`);
   let out = headers.join('\t') + '\n';
 
   TIERS.forEach(t => {
     const placed = applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => a.name);
     const head = placed[0] || '';
     const joint = placed[1] || '';
-    const sc1 = placed[2] || '';
-    const sc2 = placed[3] || '';
-    const others = placed.slice(4).join(', ');
-    out += [t.label, head, joint, sc1, sc2, others].join('\t') + '\n';
+    const extras = Array.from({ length: Math.max(0, maxPlaced - 2) }, (_, index) => placed[index + 2] || '');
+    out += [t.label, head, joint, ...extras].join('\t') + '\n';
   });
 
   const unplaced = applicants.filter(a => !placements[applicantKey(a)]).map(a => a.name);
