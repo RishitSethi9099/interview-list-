@@ -749,17 +749,25 @@ document.getElementById('export-modal').addEventListener('click', e => {
 });
 
 function buildExport() {
-  let out = '=== INTERVIEW PLACEMENTS ===\n\n';
+  // Tabular export: Team, Head, Joint Head, SC1, SC2, Others
+  const headers = ['Team','Head','Joint Head','SC1','SC2','Others'];
+  let out = headers.join('\t') + '\n';
+
   TIERS.forEach(t => {
-    const placed = applicants.filter(a=>placements[applicantKey(a)]===t.id);
-    if (placed.length) {
-      out += `[${t.label}]\n`;
-      placed.forEach(a => out += `  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`);
-      out += '\n';
-    }
+    const placed = applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => a.name);
+    const head = placed[0] || '';
+    const joint = placed[1] || '';
+    const sc1 = placed[2] || '';
+    const sc2 = placed[3] || '';
+    const others = placed.slice(4).join(', ');
+    out += [t.label, head, joint, sc1, sc2, others].join('\t') + '\n';
   });
-  const unplaced = applicants.filter(a=>!placements[applicantKey(a)]);
-  if (unplaced.length) { out += `[UNPLACED]\n`; unplaced.forEach(a=>out+=`  ${a.name}  |  P1: ${a.pref1}  |  P2: ${a.pref2}  |  CC: ${a.cc||'—'}  |  Prev: ${a.previous||'—'}  |  Participated: ${a.participated||'—'}\n`); }
+
+  const unplaced = applicants.filter(a => !placements[applicantKey(a)]).map(a => a.name);
+  if (unplaced.length) {
+    out += '\nUNPLACED\nName\n';
+    unplaced.forEach(n => { out += n + '\n'; });
+  }
   return out;
 }
 
@@ -778,10 +786,18 @@ function tierLabelFromId(tierId) {
 }
 
 function buildExcelXml() {
-  const rows = [
-    ['Name', 'Position'],
-    ...applicants.map(applicant => [applicant.name, tierLabelFromId(placements[applicantKey(applicant)])]),
-  ];
+  // Build rows: header then one row per team with Head, Joint Head, SC1, SC2, Others
+  const headers = ['Team','Head','Joint Head','SC1','SC2','Others'];
+  const rows = [headers];
+  TIERS.forEach(t => {
+    const placed = applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => a.name);
+    const head = placed[0] || '';
+    const joint = placed[1] || '';
+    const sc1 = placed[2] || '';
+    const sc2 = placed[3] || '';
+    const others = placed.slice(4).join(', ');
+    rows.push([t.label, head, joint, sc1, sc2, others]);
+  });
 
   const sheetRows = rows.map(row => (
     `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`
