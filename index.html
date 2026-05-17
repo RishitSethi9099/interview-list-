@@ -345,6 +345,7 @@ let placements = {};
 let dragId = null;
 let filterPost = '';
 let filterSearch = '';
+let placementOrder = {};
 let role = null;
 const BOARD_STATE_KEY = 'interviewBoardStateV1';
 const BOARD_CHANNEL = 'interview-board-sync';
@@ -471,12 +472,38 @@ function normalizePlacements(rawPlacements, list) {
   return next;
 }
 
+function normalizePlacementOrder(rawOrder, list) {
+  const src = rawOrder && typeof rawOrder === 'object' ? rawOrder : {};
+  const next = {};
+
+  TIERS.forEach(t => next[t.id] = []);
+  if (src) {
+    Object.keys(src).forEach(k => {
+      if (!next[k]) next[k] = [];
+      (Array.isArray(src[k]) ? src[k] : []).forEach(id => {
+        // ensure id exists in applicants
+        if (list.find(a => applicantKey(a) === id)) next[k].push(id);
+      });
+    });
+  }
+
+  // fill missing ids from placements map
+  list.forEach(a => {
+    const key = applicantKey(a);
+    const tier = placements[key] || null;
+    if (tier && next[tier] && !next[tier].includes(key)) next[tier].push(key);
+  });
+
+  return next;
+}
+
 function applyBoardState(state, options = {}) {
   const shouldPersist = options.persist !== false;
   const shouldBroadcast = options.broadcast !== false;
 
   applicants = normalizeApplicants(state.applicants);
   placements = normalizePlacements(state.placements, applicants);
+  placementOrder = normalizePlacementOrder(state.placementOrder || {}, applicants);
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('board-screen').style.display = 'flex';
@@ -540,6 +567,7 @@ function saveBoardState(options = {}) {
   const state = {
     applicants,
     placements,
+    placementOrder,
     updatedAt: Date.now(),
   };
   try {
@@ -548,6 +576,29 @@ function saveBoardState(options = {}) {
 
   if (shouldBroadcast && boardChannel) {
     try { boardChannel.postMessage(state); } catch (e) {}
+  }
+}
+
+function moveUp(appId, tierId) {
+  if (!placementOrder[tierId]) placementOrder[tierId] = [];
+  const idx = placementOrder[tierId].indexOf(appId);
+  if (idx > 0) {
+    [placementOrder[tierId][idx - 1], placementOrder[tierId][idx]] = [placementOrder[tierId][idx], placementOrder[tierId][idx - 1]];
+    // update placements map to ensure consistency
+    placements[appId] = tierId;
+    saveBoardState({ broadcast: true });
+    render();
+  }
+}
+
+function moveDown(appId, tierId) {
+  if (!placementOrder[tierId]) placementOrder[tierId] = [];
+  const idx = placementOrder[tierId].indexOf(appId);
+  if (idx !== -1 && idx < placementOrder[tierId].length - 1) {
+    [placementOrder[tierId][idx + 1], placementOrder[tierId][idx]] = [placementOrder[tierId][idx], placementOrder[tierId][idx + 1]];
+    placements[appId] = tierId;
+    saveBoardState({ broadcast: true });
+    render();
   }
 }
 
@@ -648,20 +699,14 @@ function render() {
     return true;
   });
 
-  // group visible applicants by tier to render ordered labels (Head / Joint Head / SC)
-  const byTier = {};
-  visible.forEach(ap => {
-    const tier = placements[applicantKey(ap)] || 'pool';
-    if (!byTier[tier]) byTier[tier] = [];
-    byTier[tier].push(ap);
-  });
-
-  // render placed applicants with short labels for positions
+  // render placed applicants using placementOrder when available
   TIERS.forEach(t => {
     const zone = document.getElementById('drop-' + t.id);
-    const list = byTier[t.id] || [];
+    const orderedIds = placementOrder[t.id] || [];
+    const list = orderedIds.length ? orderedIds.map(id => applicants.find(a => applicantKey(a) === id)).filter(Boolean) : (visible.filter(ap => (placements[applicantKey(ap)] || 'pool') === t.id));
     list.forEach((ap, idx) => {
-      const card = makeCard(ap, t.id);
+      const applicant = ap;
+      const card = makeCard(applicant, t.id);
       const wrapper = document.createElement('div');
       wrapper.style.display = 'flex';
       wrapper.style.flexDirection = 'column';
@@ -674,18 +719,27 @@ function render() {
       label.style.opacity = '0.95';
       label.style.marginLeft = '8px';
       label.textContent = labelText;
+
+      const controls = document.createElement('div');
+      controls.style.display = 'inline-flex';
+      controls.style.gap = '6px';
+      controls.style.marginLeft = '8px';
+      const up = document.createElement('button'); up.textContent = '▲'; up.className = 'btn'; up.style.padding = '2px 6px'; up.style.fontSize = '12px';
+      const down = document.createElement('button'); down.textContent = '▼'; down.className = 'btn'; down.style.padding = '2px 6px'; down.style.fontSize = '12px';
+      up.onclick = () => moveUp(applicantKey(applicant), t.id);
+      down.onclick = () => moveDown(applicantKey(applicant), t.id);
+
       wrapper.appendChild(label);
+      controls.appendChild(up); controls.appendChild(down);
+      wrapper.appendChild(controls);
       wrapper.appendChild(card);
       zone.appendChild(wrapper);
     });
   });
 
   // render pool (unplaced) without labels
-  const poolList = byTier['pool'] || [];
-  poolList.forEach(ap => {
-    const card = makeCard(ap, 'pool');
-    pool.appendChild(card);
-  });
+  const poolList = visible.filter(ap => !(placements[applicantKey(ap)]));
+  poolList.forEach(ap => { const card = makeCard(ap, 'pool'); pool.appendChild(card); });
 
   const unplaced = applicants.filter(a => !placements[applicantKey(a)]).length;
   const placed = applicants.length - unplaced;

@@ -347,6 +347,7 @@ let placements = {};
 let dragId = null;
 let filterPost = '';
 let filterSearch = '';
+let placementOrder = {};
 let role = null;
 
 function initials(name) { return name.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
@@ -415,6 +416,8 @@ function splitCSVLine(line) {
 function loadData(data) {
   applicants = data.filter(a => a.name);
   placements = {};
+  placementOrder = {};
+  TIERS.forEach(t => placementOrder[t.id] = []);
   document.getElementById('upload-screen').style.display = 'none';
   const bs = document.getElementById('board-screen');
   bs.style.display = 'flex';
@@ -433,6 +436,28 @@ function buildBoard() {
       <div class="tier-drop" id="drop-${t.id}" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event,'${t.id}')"></div>`;
     board.appendChild(row);
   });
+}
+
+function moveUp(name, tierId) {
+  if (!placementOrder[tierId]) placementOrder[tierId] = [];
+  const idx = placementOrder[tierId].indexOf(name);
+  if (idx > 0) {
+    [placementOrder[tierId][idx - 1], placementOrder[tierId][idx]] = [placementOrder[tierId][idx], placementOrder[tierId][idx - 1]];
+    placements[name] = tierId;
+    try { localStorage.setItem(BOARD_STATE_KEY, JSON.stringify({ applicants, placements, placementOrder, updatedAt: Date.now() })); } catch (e) {}
+    render();
+  }
+}
+
+function moveDown(name, tierId) {
+  if (!placementOrder[tierId]) placementOrder[tierId] = [];
+  const idx = placementOrder[tierId].indexOf(name);
+  if (idx !== -1 && idx < placementOrder[tierId].length - 1) {
+    [placementOrder[tierId][idx + 1], placementOrder[tierId][idx]] = [placementOrder[tierId][idx], placementOrder[tierId][idx + 1]];
+    placements[name] = tierId;
+    try { localStorage.setItem(BOARD_STATE_KEY, JSON.stringify({ applicants, placements, placementOrder, updatedAt: Date.now() })); } catch (e) {}
+    render();
+  }
 }
 
 function populateFilter() {
@@ -459,18 +484,11 @@ function render() {
     return true;
   });
 
-  // group visible applicants by tier so we can render Head / Joint Head / SC labels
-  const byTier = {};
-  visible.forEach(ap => {
-    const tier = placements[ap.name] || 'pool';
-    if (!byTier[tier]) byTier[tier] = [];
-    byTier[tier].push(ap);
-  });
-
+  // use placementOrder if present to render ordered placements
   TIERS.forEach(t => {
     const zone = document.getElementById('drop-' + t.id);
-    const list = byTier[t.id] || [];
-    list.forEach((ap, idx) => {
+    const ordered = placementOrder[t.id] && placementOrder[t.id].length ? placementOrder[t.id].map(id => applicants.find(a => a.name === id)).filter(Boolean) : visible.filter(ap => (placements[ap.name] || 'pool') === t.id);
+    ordered.forEach((ap, idx) => {
       const card = makeCard(ap, t.id);
       const wrapper = document.createElement('div');
       wrapper.style.display = 'flex';
@@ -485,13 +503,25 @@ function render() {
       label.style.opacity = '0.95';
       label.style.marginLeft = '8px';
       label.textContent = labelText;
+
+      const controls = document.createElement('div');
+      controls.style.display = 'inline-flex';
+      controls.style.gap = '6px';
+      controls.style.marginLeft = '8px';
+      const up = document.createElement('button'); up.textContent = '▲'; up.className = 'btn'; up.style.padding = '2px 6px'; up.style.fontSize = '12px';
+      const down = document.createElement('button'); down.textContent = '▼'; down.className = 'btn'; down.style.padding = '2px 6px'; down.style.fontSize = '12px';
+      up.onclick = () => moveUp(ap.name, t.id);
+      down.onclick = () => moveDown(ap.name, t.id);
+
       wrapper.appendChild(label);
+      controls.appendChild(up); controls.appendChild(down);
+      wrapper.appendChild(controls);
       wrapper.appendChild(card);
       zone.appendChild(wrapper);
     });
   });
 
-  const poolList = byTier['pool'] || [];
+  const poolList = visible.filter(ap => !(placements[ap.name]));
   poolList.forEach(ap => { const card = makeCard(ap, 'pool'); pool.appendChild(card); });
 
   const unplaced = applicants.filter(a => !placements[a.name]).length;
