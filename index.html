@@ -778,30 +778,28 @@ function tierLabelFromId(tierId) {
 }
 
 function buildExcelXml() {
-  const rows = [
-    ['Name', 'Position'],
-    ...applicants.map(applicant => [applicant.name, tierLabelFromId(placements[applicantKey(applicant)])]),
-  ];
+  // Build a team-based table: Team | Head | Joint Head | SC1 | SC2 | ...
+  const perTier = TIERS.map(t => applicants.filter(a => placements[applicantKey(a)] === t.id));
+  const maxLen = Math.max(2, ...perTier.map(arr => arr.length));
+  const header = ['Team', 'Head', 'Joint Head'].concat(Array.from({length: Math.max(0, maxLen-2)}, (_,i)=>`SC ${i+1}`));
 
-  const sheetRows = rows.map(row => (
-    `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`
-  )).join('');
+  const rows = [header].concat(TIERS.map((t, ti) => {
+    const list = perTier[ti];
+    const cells = [];
+    cells.push(t.label);
+    cells.push(list[0]?.name || '');
+    cells.push(list[1]?.name || '');
+    for (let k = 0; k < Math.max(0, maxLen - 2); k++) cells.push(list[2 + k]?.name || '');
+    return cells;
+  }));
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-  <Worksheet ss:Name="Interview Results">
-    <Table>
-      ${sheetRows}
-    </Table>
-  </Worksheet>
-</Workbook>`;
+  const sheetRows = rows.map(r => `<Row>${r.map(c => `<Cell><Data ss:Type="String">${escapeXml(c)}</Data></Cell>`).join('')}</Row>`).join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n xmlns:o="urn:schemas-microsoft-com:office:office"\n xmlns:x="urn:schemas-microsoft-com:office:excel"\n xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n  <Worksheet ss:Name="Interview Results">\n    <Table>\n      ${sheetRows}\n    </Table>\n  </Worksheet>\n</Workbook>`;
 }
 
 document.getElementById('export-btn').addEventListener('click', () => {
-  document.getElementById('export-text').value = buildExport();
+  document.getElementById('export-text').value = buildExcelXml();
   document.getElementById('export-modal').classList.add('open');
 });
 
