@@ -345,7 +345,6 @@ let placements = {};
 let dragId = null;
 let filterPost = '';
 let filterSearch = '';
-let placementOrder = {};
 let role = null;
 const BOARD_STATE_KEY = 'interviewBoardStateV1';
 const BOARD_CHANNEL = 'interview-board-sync';
@@ -472,38 +471,12 @@ function normalizePlacements(rawPlacements, list) {
   return next;
 }
 
-function normalizePlacementOrder(rawOrder, list) {
-  const src = rawOrder && typeof rawOrder === 'object' ? rawOrder : {};
-  const next = {};
-
-  TIERS.forEach(t => next[t.id] = []);
-  if (src) {
-    Object.keys(src).forEach(k => {
-      if (!next[k]) next[k] = [];
-      (Array.isArray(src[k]) ? src[k] : []).forEach(id => {
-        // ensure id exists in applicants
-        if (list.find(a => applicantKey(a) === id)) next[k].push(id);
-      });
-    });
-  }
-
-  // fill missing ids from placements map
-  list.forEach(a => {
-    const key = applicantKey(a);
-    const tier = placements[key] || null;
-    if (tier && next[tier] && !next[tier].includes(key)) next[tier].push(key);
-  });
-
-  return next;
-}
-
 function applyBoardState(state, options = {}) {
   const shouldPersist = options.persist !== false;
   const shouldBroadcast = options.broadcast !== false;
 
   applicants = normalizeApplicants(state.applicants);
   placements = normalizePlacements(state.placements, applicants);
-  placementOrder = normalizePlacementOrder(state.placementOrder || {}, applicants);
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('board-screen').style.display = 'flex';
@@ -567,7 +540,6 @@ function saveBoardState(options = {}) {
   const state = {
     applicants,
     placements,
-    placementOrder,
     updatedAt: Date.now(),
   };
   try {
@@ -576,29 +548,6 @@ function saveBoardState(options = {}) {
 
   if (shouldBroadcast && boardChannel) {
     try { boardChannel.postMessage(state); } catch (e) {}
-  }
-}
-
-function moveUp(appId, tierId) {
-  if (!placementOrder[tierId]) placementOrder[tierId] = [];
-  const idx = placementOrder[tierId].indexOf(appId);
-  if (idx > 0) {
-    [placementOrder[tierId][idx - 1], placementOrder[tierId][idx]] = [placementOrder[tierId][idx], placementOrder[tierId][idx - 1]];
-    // update placements map to ensure consistency
-    placements[appId] = tierId;
-    saveBoardState({ broadcast: true });
-    render();
-  }
-}
-
-function moveDown(appId, tierId) {
-  if (!placementOrder[tierId]) placementOrder[tierId] = [];
-  const idx = placementOrder[tierId].indexOf(appId);
-  if (idx !== -1 && idx < placementOrder[tierId].length - 1) {
-    [placementOrder[tierId][idx + 1], placementOrder[tierId][idx]] = [placementOrder[tierId][idx], placementOrder[tierId][idx + 1]];
-    placements[appId] = tierId;
-    saveBoardState({ broadcast: true });
-    render();
   }
 }
 
@@ -699,56 +648,13 @@ function render() {
     return true;
   });
 
-  // render placed applicants using placementOrder when available
-  TIERS.forEach(t => {
-    const zone = document.getElementById('drop-' + t.id);
-    const orderedIds = placementOrder[t.id] || [];
-    const list = orderedIds.length ? orderedIds.map(id => applicants.find(a => applicantKey(a) === id)).filter(Boolean) : (visible.filter(ap => (placements[applicantKey(ap)] || 'pool') === t.id));
-    list.forEach((ap, idx) => {
-      const applicant = ap;
-      const card = makeCard(applicant, t.id);
-      const wrapper = document.createElement('div');
-      wrapper.style.display = 'flex';
-      wrapper.style.flexDirection = 'column';
-      wrapper.style.gap = '6px';
-      const labelText = idx === 0 ? 'Head' : idx === 1 ? 'Joint Head' : `SC${idx - 1}`;
-      const label = document.createElement('div');
-      label.style.fontSize = '12px';
-      label.style.color = 'var(--text)';
-      label.style.fontWeight = '700';
-      label.style.opacity = '0.95';
-      label.style.marginLeft = '8px';
-      label.textContent = labelText;
-
-      wrapper.appendChild(label);
-      // make card a drop target so dragging over another card will reorder
-      card.ondragover = (e) => { e.preventDefault(); };
-      card.ondrop = (e) => {
-        e.preventDefault();
-        const dragged = dragId;
-        const target = applicantKey(applicant);
-        if (!dragged || !target) return;
-        // if same tier, insert dragged before target
-        const targetTier = placements[target] || null;
-        if (!placementOrder[targetTier]) placementOrder[targetTier] = [];
-        // remove dragged from any previous tier
-        Object.keys(placementOrder).forEach(k => { placementOrder[k] = placementOrder[k].filter(id => id !== dragged); });
-        const idx = placementOrder[targetTier].indexOf(target);
-        if (idx === -1) placementOrder[targetTier].push(dragged); else placementOrder[targetTier].splice(idx, 0, dragged);
-        // normalize: dedupe and align placements
-        Object.keys(placementOrder).forEach(k => { placementOrder[k] = Array.from(new Set(placementOrder[k])); });
-        Object.keys(placementOrder).forEach(k => { placementOrder[k].forEach(id => placements[id] = k); });
-        saveBoardState({ broadcast: true });
-        render();
-      };
-      wrapper.appendChild(card);
-      zone.appendChild(wrapper);
-    });
+  visible.forEach(ap => {
+    const tier = placements[applicantKey(ap)] || 'pool';
+    const zone = tier === 'pool' ? pool : document.getElementById('drop-'+tier);
+    if (!zone) return;
+    const card = makeCard(ap, tier);
+    zone.appendChild(card);
   });
-
-  // render pool (unplaced) without labels
-  const poolList = visible.filter(ap => !(placements[applicantKey(ap)]));
-  poolList.forEach(ap => { const card = makeCard(ap, 'pool'); pool.appendChild(card); });
 
   const unplaced = applicants.filter(a => !placements[applicantKey(a)]).length;
   const placed = applicants.length - unplaced;
@@ -872,28 +778,30 @@ function tierLabelFromId(tierId) {
 }
 
 function buildExcelXml() {
-  // Build a team-based table: Team | Head | Joint Head | SC1 | SC2 | ...
-  const perTier = TIERS.map(t => applicants.filter(a => placements[applicantKey(a)] === t.id));
-  const maxLen = Math.max(2, ...perTier.map(arr => arr.length));
-  const header = ['Team', 'Head', 'Joint Head'].concat(Array.from({length: Math.max(0, maxLen-2)}, (_,i)=>`SC ${i+1}`));
+  const rows = [
+    ['Name', 'Position'],
+    ...applicants.map(applicant => [applicant.name, tierLabelFromId(placements[applicantKey(applicant)])]),
+  ];
 
-  const rows = [header].concat(TIERS.map((t, ti) => {
-    const list = perTier[ti];
-    const cells = [];
-    cells.push(t.label);
-    cells.push(list[0]?.name || '');
-    cells.push(list[1]?.name || '');
-    for (let k = 0; k < Math.max(0, maxLen - 2); k++) cells.push(list[2 + k]?.name || '');
-    return cells;
-  }));
+  const sheetRows = rows.map(row => (
+    `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`
+  )).join('');
 
-  const sheetRows = rows.map(r => `<Row>${r.map(c => `<Cell><Data ss:Type="String">${escapeXml(c)}</Data></Cell>`).join('')}</Row>`).join('');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n xmlns:o="urn:schemas-microsoft-com:office:office"\n xmlns:x="urn:schemas-microsoft-com:office:excel"\n xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n  <Worksheet ss:Name="Interview Results">\n    <Table>\n      ${sheetRows}\n    </Table>\n  </Worksheet>\n</Workbook>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="Interview Results">
+    <Table>
+      ${sheetRows}
+    </Table>
+  </Worksheet>
+</Workbook>`;
 }
 
 document.getElementById('export-btn').addEventListener('click', () => {
-  document.getElementById('export-text').value = buildExcelXml();
+  document.getElementById('export-text').value = buildExport();
   document.getElementById('export-modal').classList.add('open');
 });
 
