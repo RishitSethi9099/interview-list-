@@ -735,7 +735,9 @@ function render() {
         Object.keys(placementOrder).forEach(k => { placementOrder[k] = placementOrder[k].filter(id => id !== dragged); });
         const idx = placementOrder[targetTier].indexOf(target);
         if (idx === -1) placementOrder[targetTier].push(dragged); else placementOrder[targetTier].splice(idx, 0, dragged);
-        placements[dragged] = targetTier;
+        // normalize: dedupe and align placements
+        Object.keys(placementOrder).forEach(k => { placementOrder[k] = Array.from(new Set(placementOrder[k])); });
+        Object.keys(placementOrder).forEach(k => { placementOrder[k].forEach(id => placements[id] = k); });
         saveBoardState({ broadcast: true });
         render();
       };
