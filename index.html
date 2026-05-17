@@ -666,7 +666,7 @@ function render() {
       wrapper.style.display = 'flex';
       wrapper.style.flexDirection = 'column';
       wrapper.style.gap = '6px';
-      const labelText = idx === 0 ? 'Head' : idx === 1 ? 'Joint Head' : 'SC';
+      const labelText = idx === 0 ? 'Head' : idx === 1 ? 'Joint Head' : `SC${idx - 1}`;
       const label = document.createElement('div');
       label.style.fontSize = '12px';
       label.style.color = 'var(--text)';
