@@ -720,18 +720,25 @@ function render() {
       label.style.marginLeft = '8px';
       label.textContent = labelText;
 
-      const controls = document.createElement('div');
-      controls.style.display = 'inline-flex';
-      controls.style.gap = '6px';
-      controls.style.marginLeft = '8px';
-      const up = document.createElement('button'); up.textContent = '▲'; up.className = 'btn'; up.style.padding = '2px 6px'; up.style.fontSize = '12px';
-      const down = document.createElement('button'); down.textContent = '▼'; down.className = 'btn'; down.style.padding = '2px 6px'; down.style.fontSize = '12px';
-      up.onclick = () => moveUp(applicantKey(applicant), t.id);
-      down.onclick = () => moveDown(applicantKey(applicant), t.id);
-
       wrapper.appendChild(label);
-      controls.appendChild(up); controls.appendChild(down);
-      wrapper.appendChild(controls);
+      // make card a drop target so dragging over another card will reorder
+      card.ondragover = (e) => { e.preventDefault(); };
+      card.ondrop = (e) => {
+        e.preventDefault();
+        const dragged = dragId;
+        const target = applicantKey(applicant);
+        if (!dragged || !target) return;
+        // if same tier, insert dragged before target
+        const targetTier = placements[target] || null;
+        if (!placementOrder[targetTier]) placementOrder[targetTier] = [];
+        // remove dragged from any previous tier
+        Object.keys(placementOrder).forEach(k => { placementOrder[k] = placementOrder[k].filter(id => id !== dragged); });
+        const idx = placementOrder[targetTier].indexOf(target);
+        if (idx === -1) placementOrder[targetTier].push(dragged); else placementOrder[targetTier].splice(idx, 0, dragged);
+        placements[dragged] = targetTier;
+        saveBoardState({ broadcast: true });
+        render();
+      };
       wrapper.appendChild(card);
       zone.appendChild(wrapper);
     });
