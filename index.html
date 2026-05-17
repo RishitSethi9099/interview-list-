@@ -648,12 +648,43 @@ function render() {
     return true;
   });
 
+  // group visible applicants by tier to render ordered labels (Head / Joint Head / SC)
+  const byTier = {};
   visible.forEach(ap => {
     const tier = placements[applicantKey(ap)] || 'pool';
-    const zone = tier === 'pool' ? pool : document.getElementById('drop-'+tier);
-    if (!zone) return;
-    const card = makeCard(ap, tier);
-    zone.appendChild(card);
+    if (!byTier[tier]) byTier[tier] = [];
+    byTier[tier].push(ap);
+  });
+
+  // render placed applicants with short labels for positions
+  TIERS.forEach(t => {
+    const zone = document.getElementById('drop-' + t.id);
+    const list = byTier[t.id] || [];
+    list.forEach((ap, idx) => {
+      const card = makeCard(ap, t.id);
+      const wrapper = document.createElement('div');
+      wrapper.style.display = 'flex';
+      wrapper.style.flexDirection = 'column';
+      wrapper.style.gap = '6px';
+      const labelText = idx === 0 ? 'Head' : idx === 1 ? 'Joint Head' : 'SC';
+      const label = document.createElement('div');
+      label.style.fontSize = '12px';
+      label.style.color = 'var(--text)';
+      label.style.fontWeight = '700';
+      label.style.opacity = '0.95';
+      label.style.marginLeft = '8px';
+      label.textContent = labelText;
+      wrapper.appendChild(label);
+      wrapper.appendChild(card);
+      zone.appendChild(wrapper);
+    });
+  });
+
+  // render pool (unplaced) without labels
+  const poolList = byTier['pool'] || [];
+  poolList.forEach(ap => {
+    const card = makeCard(ap, 'pool');
+    pool.appendChild(card);
   });
 
   const unplaced = applicants.filter(a => !placements[applicantKey(a)]).length;
