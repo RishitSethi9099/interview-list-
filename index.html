@@ -343,6 +343,8 @@ const DEMO = [
 let applicants = [];
 let placements = {};
 let dragId = null;
+let dragEl = null;
+let placementsOrder = {};
 let filterPost = '';
 let filterSearch = '';
 let role = null;
@@ -477,6 +479,18 @@ function applyBoardState(state, options = {}) {
 
   applicants = normalizeApplicants(state.applicants);
   placements = normalizePlacements(state.placements, applicants);
+  placementsOrder = state.placementsOrder && typeof state.placementsOrder === 'object' ? state.placementsOrder : {};
+
+  // if placementsOrder wasn't provided, build it from placements preserving applicants order
+  if (!placementsOrder || Object.keys(placementsOrder).length === 0) {
+    placementsOrder = {};
+    applicants.forEach(a => {
+      const key = applicantKey(a);
+      const t = placements[key] || 'pool';
+      placementsOrder[t] = placementsOrder[t] || [];
+      placementsOrder[t].push(key);
+    });
+  }
 
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('board-screen').style.display = 'flex';
@@ -540,6 +554,7 @@ function saveBoardState(options = {}) {
   const state = {
     applicants,
     placements,
+    placementsOrder,
     updatedAt: Date.now(),
   };
   try {
@@ -571,6 +586,7 @@ function applySavedPlacementsFromStorage() {
     const state = JSON.parse(raw);
     if (!state || !state.placements || typeof state.placements !== 'object') return false;
     placements = normalizePlacements(state.placements, applicants);
+    placementsOrder = state.placementsOrder && typeof state.placementsOrder === 'object' ? state.placementsOrder : {};
     render();
     saveBoardState({ broadcast: false });
     return true;
@@ -635,26 +651,42 @@ function populateFilter() {
 }
 
 function render() {
-  TIERS.forEach(t => {
-    document.getElementById('drop-'+t.id).innerHTML = '';
-  });
   const pool = document.getElementById('pool');
   const poolEmpty = document.getElementById('pool-empty');
+
+  // Clear zones
+  TIERS.forEach(t => { document.getElementById('drop-'+t.id).innerHTML = ''; });
   pool.querySelectorAll('.card').forEach(c=>c.remove());
 
-  const visible = applicants.filter(a => {
+  // Compute visible set
+  const visibleSet = new Set(applicants.filter(a => {
     if (filterPost && a.pref1 !== filterPost && a.pref2 !== filterPost) return false;
     if (filterSearch && !a.name.toLowerCase().includes(filterSearch.toLowerCase())) return false;
     return true;
+  }).map(a => applicantKey(a)));
+
+  // Render tiers using placementsOrder when available to preserve ordering
+  TIERS.forEach(t => {
+    const zone = document.getElementById('drop-'+t.id);
+    const ordered = Array.isArray(placementsOrder[t.id]) && placementsOrder[t.id].length ? placementsOrder[t.id] : applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => applicantKey(a));
+    ordered.forEach(id => {
+      if (!visibleSet.has(id)) return;
+      const ap = applicants.find(a => applicantKey(a) === id);
+      if (!ap) return;
+      const roleLabel = getRoleLabel(t.id, id);
+      const card = makeCard(ap, t.id, roleLabel);
+      zone.appendChild(card);
+    });
   });
 
-  visible.forEach(ap => {
-    const tier = placements[applicantKey(ap)] || 'pool';
-    const zone = tier === 'pool' ? pool : document.getElementById('drop-'+tier);
-    if (!zone) return;
-    const roleLabel = tier === 'pool' ? '' : getRoleLabel(tier, applicantKey(ap));
-    const card = makeCard(ap, tier, roleLabel);
-    zone.appendChild(card);
+  // Render pool (unplaced)
+  const poolOrdered = Array.isArray(placementsOrder.pool) && placementsOrder.pool.length ? placementsOrder.pool : applicants.filter(a => !placements[applicantKey(a)]).map(a => applicantKey(a));
+  poolOrdered.forEach(id => {
+    if (!visibleSet.has(id)) return;
+    const ap = applicants.find(a => applicantKey(a) === id) || applicants.find(a => applicantKey(a) === id);
+    if (!ap) return;
+    const card = makeCard(ap, 'pool', '');
+    pool.appendChild(card);
   });
 
   const unplaced = applicants.filter(a => !placements[applicantKey(a)]).length;
@@ -666,7 +698,7 @@ function render() {
 }
 
 function getRoleLabel(tierId, applicantId) {
-  const tierMembers = applicants.filter(a => placements[applicantKey(a)] === tierId).map(a => applicantKey(a));
+  const tierMembers = Array.isArray(placementsOrder[tierId]) && placementsOrder[tierId].length ? placementsOrder[tierId] : applicants.filter(a => placements[applicantKey(a)] === tierId).map(a => applicantKey(a));
   const index = tierMembers.indexOf(applicantId);
   if (index === -1) return '';
   if (index === 0) return 'Head';
@@ -682,18 +714,88 @@ function makeCard(ap, tier, roleLabel = '') {
   const col = iniColor(ap.name);
   const ini = initials(ap.name);
   card.innerHTML = `<div class="ini" style="background:${col}22;color:${col}">${ini}</div><div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1"><span style="font-size:10px;font-weight:700;letter-spacing:.04em;color:${col};text-transform:uppercase;${roleLabel ? '' : 'display:none;'}">${roleLabel}</span><span>${ap.name}</span></div>${ap.pref1?`<span class="post-tag" title="Preference 1">${ap.pref1.replace(' Team','')}</span>`:''}${ap.pref2?`<span class="post-tag" style="opacity:.6" title="Preference 2">${ap.pref2.replace(' Team','')}</span>`:''}${ap.cc==='yes'?`<span title="CC at other club" style="font-size:10px;color:#e74c3c;border:1px solid rgba(231,76,60,.4);background:rgba(231,76,60,.1);padding:1px 6px;border-radius:99px">CC</span>`:''}`;
-  card.addEventListener('dragstart', e => { dragId = applicantKey(ap); e.dataTransfer.effectAllowed='move'; });
+  card.addEventListener('dragstart', e => { dragId = applicantKey(ap); dragEl = card; e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', dragId); });
   card.addEventListener('click', () => openModal(applicantKey(ap)));
   return card;
 }
 
-function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
-function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+function getDropBeforeElement(container, clientX, clientY) {
+  const children = Array.from(container.querySelectorAll('.card'));
+  for (const child of children) {
+    const rect = child.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
+    if (clientX < midX) return child;
+  }
+  return null;
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  const zone = e.currentTarget;
+  zone.classList.add('drag-over');
+
+  const sourceTier = dragId ? (placements[dragId] || 'pool') : 'pool';
+  const targetTier = zone.id === 'pool' ? 'pool' : zone.id.replace('drop-', '');
+
+  if (sourceTier === targetTier) {
+    showPlaceholder(zone, e.clientX, e.clientY);
+  } else {
+    removePlaceholder(zone);
+  }
+}
+function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); removePlaceholder(e.currentTarget); }
 async function onDrop(e, target) {
   e.preventDefault(); e.currentTarget.classList.remove('drag-over');
   if (!dragId) return;
-  if (target === 'pool') delete placements[dragId];
-  else placements[dragId] = target;
+
+  const dropZone = e.currentTarget;
+  const sourceTier = placements[dragId] || 'pool';
+  const sameTierMove = sourceTier === target;
+
+  // try to locate the dragged element if available
+  if (!dragEl) {
+    const dragged = document.querySelector(`.card[data-name="${dragId}"]`);
+    if (dragged) dragEl = dragged;
+  }
+
+  // remove from previous parent (we'll re-insert at correct position)
+  if (dragEl && dragEl.parentNode) dragEl.parentNode.removeChild(dragEl);
+
+  const ph = dropZone.querySelector('.drop-placeholder');
+  if (sameTierMove) {
+    if (ph) {
+      dropZone.insertBefore(dragEl, ph);
+      removePlaceholder(dropZone);
+    } else {
+      const before = getDropBeforeElement(dropZone, e.clientX, e.clientY);
+      if (before) dropZone.insertBefore(dragEl, before); else dropZone.appendChild(dragEl);
+    }
+  } else {
+    removePlaceholder(dropZone);
+    dropZone.appendChild(dragEl);
+  }
+
+  // rebuild placements based on DOM order for the affected dropZone
+  if (target === 'pool') {
+    const ids = Array.from(dropZone.querySelectorAll('.card')).map(c => c.dataset.name);
+    ids.forEach(id => { delete placements[id]; });
+    placementsOrder.pool = ids;
+  } else {
+    const children = Array.from(dropZone.querySelectorAll('.card'));
+    const ids = children.map(c => c.dataset.name);
+    children.forEach(c => { placements[c.dataset.name] = target; });
+    placementsOrder[target] = ids;
+  }
+
+  // Also ensure any previous container that lost the dragged element has its placements rebuilt
+  TIERS.forEach(t => {
+    const zone = document.getElementById('drop-'+t.id);
+    if (!zone) return;
+    const ids = Array.from(zone.querySelectorAll('.card')).map(c=>c.dataset.name);
+    placementsOrder[t.id] = ids;
+    Object.keys(placements).forEach(k => { if (placements[k] === t.id && !ids.includes(k)) delete placements[k]; });
+  });
+
   render();
   saveBoardState();
 
@@ -703,7 +805,7 @@ async function onDrop(e, target) {
     startServerStream();
   }
 
-  dragId = null;
+  dragId = null; dragEl = null;
 }
 
 function openModal(applicantId) {
@@ -745,7 +847,24 @@ function openModal(applicantId) {
 }
 
 function quickPlace(applicantId, tier) {
+  // update placements mapping
   if (tier === 'pool') delete placements[applicantId]; else placements[applicantId] = tier;
+
+  // remove from any existing ordering
+  Object.keys(placementsOrder).forEach(k => {
+    if (!Array.isArray(placementsOrder[k])) return;
+    placementsOrder[k] = placementsOrder[k].filter(x => x !== applicantId);
+  });
+
+  // insert into target ordering
+  if (tier === 'pool') {
+    placementsOrder.pool = placementsOrder.pool || [];
+    placementsOrder.pool.push(applicantId);
+  } else {
+    placementsOrder[tier] = placementsOrder[tier] || [];
+    placementsOrder[tier].push(applicantId);
+  }
+
   render();
   saveBoardState();
   openModal(applicantId);
@@ -760,13 +879,17 @@ document.getElementById('export-modal').addEventListener('click', e => {
 
 function buildExport() {
   // Tabular export: Team, Head, Joint Head, SC1, SC2, SC3...
-  const maxPlaced = Math.max(0, ...TIERS.map(t => applicants.filter(a => placements[applicantKey(a)] === t.id).length));
+  const maxPlaced = Math.max(0, ...TIERS.map(t => (Array.isArray(placementsOrder[t.id]) ? placementsOrder[t.id].length : applicants.filter(a => placements[applicantKey(a)] === t.id).length)));
   const headers = ['Team', 'Head', 'Joint Head'];
   for (let i = 1; i <= Math.max(0, maxPlaced - 2); i++) headers.push(`SC${i}`);
   let out = headers.join('\t') + '\n';
 
   TIERS.forEach(t => {
-    const placed = applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => a.name);
+    const ids = Array.isArray(placementsOrder[t.id]) && placementsOrder[t.id].length ? placementsOrder[t.id] : applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => applicantKey(a));
+    const placed = ids.map(id => {
+      const a = applicants.find(x => applicantKey(x) === id);
+      return a ? a.name : '';
+    });
     const head = placed[0] || '';
     const joint = placed[1] || '';
     const extras = Array.from({ length: Math.max(0, maxPlaced - 2) }, (_, index) => placed[index + 2] || '');
@@ -800,12 +923,13 @@ function buildExcelXml() {
   const headers = ['Team','Head','Joint Head','SC1','SC2','Others'];
   const rows = [headers];
   TIERS.forEach(t => {
-    const placed = applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => a.name);
+    const ids = Array.isArray(placementsOrder[t.id]) && placementsOrder[t.id].length ? placementsOrder[t.id] : applicants.filter(a => placements[applicantKey(a)] === t.id).map(a => applicantKey(a));
+    const placed = ids.map(id => { const a = applicants.find(x => applicantKey(x) === id); return a ? a.name : ''; });
     const head = placed[0] || '';
     const joint = placed[1] || '';
     const sc1 = placed[2] || '';
     const sc2 = placed[3] || '';
-    const others = placed.slice(4).join(', ');
+    const others = placed.slice(4).filter(Boolean).join(', ');
     rows.push([t.label, head, joint, sc1, sc2, others]);
   });
 
@@ -857,6 +981,7 @@ document.getElementById('new-csv-btn').addEventListener('click', () => {
 
 async function resetPlacements() {
   placements = {};
+  placementsOrder = {};
   render();
   saveBoardState();
 
