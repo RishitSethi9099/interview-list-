@@ -729,28 +729,13 @@ function getDropBeforeElement(container, clientX, clientY) {
   return null;
 }
 
-function onDragOver(e) {
-  e.preventDefault();
-  const zone = e.currentTarget;
-  zone.classList.add('drag-over');
-
-  const sourceTier = dragId ? (placements[dragId] || 'pool') : 'pool';
-  const targetTier = zone.id === 'pool' ? 'pool' : zone.id.replace('drop-', '');
-
-  if (sourceTier === targetTier) {
-    showPlaceholder(zone, e.clientX, e.clientY);
-  } else {
-    removePlaceholder(zone);
-  }
-}
-function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); removePlaceholder(e.currentTarget); }
+function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+function onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
 async function onDrop(e, target) {
   e.preventDefault(); e.currentTarget.classList.remove('drag-over');
   if (!dragId) return;
 
   const dropZone = e.currentTarget;
-  const sourceTier = placements[dragId] || 'pool';
-  const sameTierMove = sourceTier === target;
 
   // try to locate the dragged element if available
   if (!dragEl) {
@@ -761,19 +746,8 @@ async function onDrop(e, target) {
   // remove from previous parent (we'll re-insert at correct position)
   if (dragEl && dragEl.parentNode) dragEl.parentNode.removeChild(dragEl);
 
-  const ph = dropZone.querySelector('.drop-placeholder');
-  if (sameTierMove) {
-    if (ph) {
-      dropZone.insertBefore(dragEl, ph);
-      removePlaceholder(dropZone);
-    } else {
-      const before = getDropBeforeElement(dropZone, e.clientX, e.clientY);
-      if (before) dropZone.insertBefore(dragEl, before); else dropZone.appendChild(dragEl);
-    }
-  } else {
-    removePlaceholder(dropZone);
-    dropZone.appendChild(dragEl);
-  }
+  const before = getDropBeforeElement(dropZone, e.clientX, e.clientY);
+  if (before) dropZone.insertBefore(dragEl, before); else dropZone.appendChild(dragEl);
 
   // rebuild placements based on DOM order for the affected dropZone
   if (target === 'pool') {
